@@ -1,51 +1,62 @@
+import os
 import psycopg2
-from scr.config import config
-
 
 class DBManager:
-    def __init__(self, db_name):
-        self.db_name = db_name
+    def __init__(self):
+        self.conn = psycopg2.connect(**self.config())
+        self.ensure_tables_exist()
 
-    def execute_query(self, query) -> list:
-        conn = psycopg2.connect(dbname='db_name', **config())
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(query)
-                result = cur.fetchall()
-        conn.close()
-        return result
+    def ensure_tables_exist(self):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS employers (
+                    employer_id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) UNIQUE NOT NULL,
+                    open_vacancies INT
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS vacancies (
+                    vacancy_id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    salary_from INT,
+                    salary_to INT,
+                    url VARCHAR(255),
+                    employer_id INT REFERENCES employers(employer_id) ON DELETE CASCADE
+                );
+            """)
+            self.conn.commit()
 
-    def get_companies_and_vacancies_count(self):
-        ''' Метод, получающий список всех компаний и вакансий у каждой компании. '''
-
-
-        result = self.execute_query('SELECT employers.name, COUNT(vacancies.employer_id) AS vacancies_count FROM employers LEFT JOIN vacancies ON employers.employer_id = vacancies.employer_id GROUP BY employers.name')
-        return result
-
+    def get_all_employers(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT employer_id, name, open_vacancies FROM employers")
+            return cur.fetchall()
 
     def get_all_vacancies(self):
-        ''' Метод, получающий список всех вакансий. '''
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT vacancy_id, name, salary_from, salary_to, url, employer_id FROM vacancies")
+            return cur.fetchall()
 
-        result = self.execute_query('SELECT employers.name, vacancies.name, vacancies.salary_from, vacancies.salary_to, vacancies.url FROM employers JOIN vacancies using (employer_id)')
-        return result
+    def insert_employer(self, name, open_vacancies):
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO employers (name, open_vacancies) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING", (name, open_vacancies))
+            self.conn.commit()
 
+    def insert_vacancy(self, name, salary_from, salary_to, url, employer_id):
+        """Добавляет новую вакансию в базу данных."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO vacancies (name, salary_from, salary_to, url, employer_id) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (vacancy_id) DO NOTHING
+            """, (name, salary_from, salary_to, url, employer_id))
+            self.conn.commit()
+            print("Вакансия успешно добавлена.")
 
-    def get_avg_salary(self):
-        ''' Метод, получающий среднюю зарплату по вакансиям. '''
-
-        result = self.execute_query('SELECT AVG(salary_from) AS payment_avg FROM vacancies')
-        return result
-
-
-    def get_vacancies_with_higher_salary(self):
-        ''' Метод, получающий список всех вакансий, у которых зарплата выше средней по всем вакансиям. '''
-
-        result = self.execute_query('SELECT * FROM vacancies WHERE salary_from > (select AVG(salary_from) FROM vacancies)')
-        return result
-
-
-    def get_vacancies_with_keyword(self, keywords):
-        ''' Метод, поиска всех вакансий по ключевому слову. '''
-
-        result = self.execute_query(f'SELECT * FROM vacancies WHERE name LIKE \'%{keywords}%\'')
-        return result
+    def config(self):
+        return {
+            'host': 'localhost',
+            'database': 'north',
+            'user': 'postgres',
+            'password': os.getenv('DB_PASSWORD', '1014'),
+            'port': '5433'
+        }
